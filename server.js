@@ -3,6 +3,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
+import fs from 'fs'; // To handle file reading and writing
 
 const app = express();
 const server = http.createServer(app);
@@ -14,6 +15,27 @@ const voteCooldowns = {};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+const DRAWINGS_FILE_PATH = path.join(__dirname, 'drawings.json'); // Path to save the drawings
+
+// Load previously saved drawings if they exist
+function loadDrawings() {
+    try {
+        const data = fs.readFileSync(DRAWINGS_FILE_PATH, 'utf8');
+        const parsedData = JSON.parse(data);
+        if (parsedData.drawnLines) {
+            drawnLines = parsedData.drawnLines;
+        }
+    } catch (error) {
+        console.log('No saved drawings or error reading file:', error);
+    }
+}
+
+// Save drawings to file
+function saveDrawings() {
+    const data = JSON.stringify({ drawnLines }, null, 2);
+    fs.writeFileSync(DRAWINGS_FILE_PATH, data, 'utf8');
+}
 
 app.get('/', (req, res) => {
     const htmlContent = `
@@ -32,6 +54,7 @@ app.get('/', (req, res) => {
                 color: white;
                 overflow: hidden;
                 height: 100vh;
+                position: relative;
             }
             #menu {
                 position: absolute;
@@ -80,6 +103,7 @@ app.get('/', (req, res) => {
             }
             canvas {
                 display: block;
+                cursor: crosshair;
             }
             #toolbar {
                 position: fixed;
@@ -90,7 +114,7 @@ app.get('/', (req, res) => {
                 flex-direction: column;
                 gap: 10px;
                 z-index: 10;
-                display: none; /* Initially hidden */
+                display: none;
             }
             .icon {
                 width: 50px;
@@ -112,20 +136,12 @@ app.get('/', (req, res) => {
                 height: 24px;
             }
             @keyframes fadeIn {
-                from {
-                    opacity: 0;
-                }
-                to {
-                    opacity: 1;
-                }
+                from { opacity: 0; }
+                to { opacity: 1; }
             }
             @keyframes pulse {
-                0%, 100% {
-                    transform: scale(1);
-                }
-                50% {
-                    transform: scale(1.1);
-                }
+                0%, 100% { transform: scale(1); }
+                50% { transform: scale(1.1); }
             }
         </style>
     </head>
@@ -161,9 +177,7 @@ app.get('/', (req, res) => {
             let dx = 0, dy = 0;
             let lastDrawPoint = null;
             let isDrawing = false;
-
-            // Camera position
-            let cameraX = 0, cameraY = 0;
+            let zoomLevel = 1;
 
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -237,6 +251,7 @@ app.get('/', (req, res) => {
 
                 ctx.save();
                 ctx.translate(-cameraX, -cameraY);
+                ctx.scale(zoomLevel, zoomLevel);
 
                 drawnLines.forEach(({ from, to, color }) => {
                     ctx.beginPath();
@@ -264,6 +279,8 @@ app.get('/', (req, res) => {
                 if (e.key === 'a') dx = -1;
                 if (e.key === 'd') dx = 1;
                 if (e.key === ' ') isDrawing = true;
+                if (e.key === 'ArrowUp') zoomLevel += 0.1;
+                if (e.key === 'ArrowDown') zoomLevel = Math.max(0.1, zoomLevel - 0.1);
             });
 
             window.addEventListener('keyup', (e) => {
@@ -314,9 +331,9 @@ app.get('/', (req, res) => {
     res.send(htmlContent);
 });
 
-const PORT = process.env.PORT || 3000; // Use dynamic port if available, otherwise fall back to 3000
-server.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+server.listen(3000, () => {
+    loadDrawings(); // Load drawings when the server starts
+    console.log('Server is running on port 3000');
 });
 
 io.on('connection', (socket) => {
@@ -335,12 +352,14 @@ io.on('connection', (socket) => {
 
     socket.on('drawLine', (line) => {
         drawnLines.push(line);
+        saveDrawings(); // Save drawings after each line
         socket.broadcast.emit('drawLine', line);
     });
 
     socket.on('resetDrawing', (code) => {
         if (code === '1121') {
             drawnLines = [];
+            saveDrawings(); // Save empty drawing after reset
             io.emit('clearDrawing');
         }
     });
