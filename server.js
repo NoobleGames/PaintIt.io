@@ -1,22 +1,20 @@
 import express from 'express';
-import { createServer } from 'http';
+import http from 'http';
 import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import path, { dirname } from 'path';
 
 const app = express();
-const server = createServer(app);
+const server = http.createServer(app);
 const io = new Server(server);
 
 let players = {};
 let drawnLines = [];
 const voteCooldowns = {};
 
-// File path helpers for ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Serve the HTML content for the game
 app.get('/', (req, res) => {
     const htmlContent = `
     <!DOCTYPE html>
@@ -92,7 +90,7 @@ app.get('/', (req, res) => {
                 flex-direction: column;
                 gap: 10px;
                 z-index: 10;
-                display: none;
+                display: none; /* Initially hidden */
             }
             .icon {
                 width: 50px;
@@ -114,12 +112,20 @@ app.get('/', (req, res) => {
                 height: 24px;
             }
             @keyframes fadeIn {
-                from { opacity: 0; }
-                to { opacity: 1; }
+                from {
+                    opacity: 0;
+                }
+                to {
+                    opacity: 1;
+                }
             }
             @keyframes pulse {
-                0%, 100% { transform: scale(1); }
-                50% { transform: scale(1.1); }
+                0%, 100% {
+                    transform: scale(1);
+                }
+                50% {
+                    transform: scale(1.1);
+                }
             }
         </style>
     </head>
@@ -155,6 +161,9 @@ app.get('/', (req, res) => {
             let dx = 0, dy = 0;
             let lastDrawPoint = null;
             let isDrawing = false;
+
+            // Camera position
+            let cameraX = 0, cameraY = 0;
 
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -226,6 +235,9 @@ app.get('/', (req, res) => {
             function drawAll() {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+                ctx.save();
+                ctx.translate(-cameraX, -cameraY);
+
                 drawnLines.forEach(({ from, to, color }) => {
                     ctx.beginPath();
                     ctx.moveTo(from.x, from.y);
@@ -242,6 +254,8 @@ app.get('/', (req, res) => {
                     ctx.fillStyle = player.color || '#ffffff';
                     ctx.fill();
                 }
+
+                ctx.restore();
             }
 
             window.addEventListener('keydown', (e) => {
@@ -264,37 +278,77 @@ app.get('/', (req, res) => {
                 currentPlayer.x += dx * 5;
                 currentPlayer.y += dy * 5;
 
+                cameraX = currentPlayer.x - canvas.width / 2;
+                cameraY = currentPlayer.y - canvas.height / 2;
+
                 socket.emit('updatePosition', { x: currentPlayer.x, y: currentPlayer.y });
-            }
-
-            function drawLine() {
-                if (!isDrawing || !currentPlayer) return;
-
-                if (!lastDrawPoint) {
-                    lastDrawPoint = { x: currentPlayer.x, y: currentPlayer.y };
-                    return;
-                }
-
-                const newPoint = { x: currentPlayer.x, y: currentPlayer.y };
-                socket.emit('drawLine', { from: lastDrawPoint, to: newPoint, color: currentColor });
-                lastDrawPoint = newPoint;
+                drawAll();
             }
 
             function gameLoop() {
                 updatePlayerPosition();
-                drawLine();
+
+                if (isDrawing && currentPlayer) {
+                    if (lastDrawPoint) {
+                        const newLine = {
+                            from: lastDrawPoint,
+                            to: { x: currentPlayer.x, y: currentPlayer.y },
+                            color: currentColor,
+                        };
+                        drawnLines.push(newLine);
+                        socket.emit('drawLine', newLine);
+                    }
+                    lastDrawPoint = { x: currentPlayer.x, y: currentPlayer.y };
+                } else {
+                    lastDrawPoint = null;
+                }
+
                 requestAnimationFrame(gameLoop);
             }
 
             gameLoop();
         </script>
     </body>
-    </html>`;
+    </html>
+    `;
     res.send(htmlContent);
 });
 
-// Handle serverless export
-export default function handler(req, res) {
-    server(req, res);
-}
+const PORT = process.env.PORT || 3000; // Use dynamic port if available, otherwise fall back to 3000
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
+
+io.on('connection', (socket) => {
+    console.log(`User connected: ${socket.id}`);
+
+    players[socket.id] = { id: socket.id, x: 0, y: 0, color: `#${Math.floor(Math.random() * 16777215).toString(16)}` };
+
+    socket.emit('initialize', { players, drawnLines });
+    socket.broadcast.emit('updatePlayers', players);
+
+    socket.on('updatePosition', (pos) => {
+        players[socket.id].x = pos.x;
+        players[socket.id].y = pos.y;
+        socket.broadcast.emit('updatePlayers', players);
+    });
+
+    socket.on('drawLine', (line) => {
+        drawnLines.push(line);
+        socket.broadcast.emit('drawLine', line);
+    });
+
+    socket.on('resetDrawing', (code) => {
+        if (code === '1121') {
+            drawnLines = [];
+            io.emit('clearDrawing');
+        }
+    });
+
+    socket.on('disconnect', () => {
+        delete players[socket.id];
+        io.emit('updatePlayers', players);
+        console.log(`User disconnected: ${socket.id}`);
+    });
+});
 
