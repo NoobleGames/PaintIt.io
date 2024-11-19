@@ -314,8 +314,9 @@ app.get('/', (req, res) => {
     res.send(htmlContent);
 });
 
-server.listen(3000, () => {
-    console.log('Server is running on port 3000');
+const PORT = process.env.PORT || 3000; // Use dynamic port if available, otherwise fall back to 3000
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
 
 io.on('connection', (socket) => {
