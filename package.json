@@ -1,8 +1,9 @@
 {
-  "name": "your-app-name",
+  "name": "PaintIt.io",
   "version": "1.0.0",
   "main": "app.js",
   "scripts": {
     "start": "node server.js"
-  }
+  },
+  "type": "module"
 }
